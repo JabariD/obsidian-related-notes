@@ -1,134 +1,201 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
 
-interface MyPluginSettings {
-	mySetting: string;
+// Interface for plugin settings
+interface SimilarNotesPluginSettings {
+	openaiApiKey: string;
+	indexRefreshRate: 'manual' | 'always' | 'onNewNote';
+	excludedFilesAndFolders: string[];
+	numberOfResults: number;
+	embeddingModel: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+// Default settings
+const DEFAULT_SETTINGS: SimilarNotesPluginSettings = {
+	openaiApiKey: '',
+	indexRefreshRate: 'manual',
+	excludedFilesAndFolders: [],
+	numberOfResults: 50,
+	embeddingModel: 'text-embedding-ada-002', // Default embedding model
+};
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+// Plugin class
+export default class SimilarNotesPlugin extends Plugin {
+	settings: SimilarNotesPluginSettings;
+	// ... (Add other variables like embedding cache here later)
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		// Register the view
+		this.registerView(
+			VIEW_TYPE_SIMILAR_NOTES,
+			(leaf) => new SimilarNotesView(leaf, this)
+		);
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
+		// Add a ribbon icon to activate the view
+		this.addRibbonIcon('dice', 'Similar Notes', () => {
+			this.activateView();
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		// Register settings tab
+		this.addSettingTab(new SimilarNotesSettingTab(this.app, this));
 	}
 
 	onunload() {
-
+		// ... (Cleanup if needed)
 	}
 
+	// Method to load settings
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 	}
 
+	// Method to save settings
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+	// Helper function to activate the view
+	async activateView() {
+		const { workspace } = this.app;
+
+		let leaf: WorkspaceLeaf | null = null;
+		const leaves = workspace.getLeavesOfType(VIEW_TYPE_SIMILAR_NOTES);
+
+		if (leaves.length > 0) {
+			// A leaf with our view already exists, use that
+			leaf = leaves[0];
+		} else {
+			// Our view could not be found in the workspace, create a new leaf
+			// in the right sidebar for it
+			leaf = workspace.getRightLeaf(false);
+			if (leaf) {
+				await leaf.setViewState({ type: VIEW_TYPE_SIMILAR_NOTES, active: true });
+			}
+		}
+
+		// "Reveal" the leaf in case it is in a collapsed sidebar
+		if (leaf) {
+			workspace.revealLeaf(leaf);
+		}
+	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+// Constant for the view type
+export const VIEW_TYPE_SIMILAR_NOTES = 'similar-notes-view';
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+// View class
+export class SimilarNotesView extends ItemView {
+  plugin: SimilarNotesPlugin;
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+  constructor(leaf: WorkspaceLeaf, plugin: SimilarNotesPlugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+
+  getViewType() {
+    return VIEW_TYPE_SIMILAR_NOTES;
+  }
+
+  getDisplayText() {
+    return 'Similar Notes';
+  }
+
+  async onOpen() {
+    const container = this.containerEl.children[1];
+    container.empty();
+    container.createEl('h2', { text: 'Similar Notes' });
+
+    // ... (Add code to fetch and display similar notes here later)
+  }
+
+  async onClose() {
+    // ... (Cleanup any elements or data here)
+  }
 }
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+// Settings tab for configuring the plugin
+class SimilarNotesSettingTab extends PluginSettingTab {
+	plugin: SimilarNotesPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: SimilarNotesPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
+			.setName('OpenAI API Key')
+			.setDesc('Enter your OpenAI API key')
+			.addText((text) =>
+				text
+					.setPlaceholder('Your API key')
+					.setValue(this.plugin.settings.openaiApiKey)
+					.onChange(async (value) => {
+						this.plugin.settings.openaiApiKey = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Index Refresh Rate')
+			.setDesc('How often should the embedding index be updated?')
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption('manual', 'Manual')
+					.addOption('always', 'Always')
+					.addOption('onNewNote', 'On New Note')
+					.setValue(this.plugin.settings.indexRefreshRate)
+					.onChange(async (value) => {
+						this.plugin.settings.indexRefreshRate = value as 'manual' | 'always' | 'onNewNote';
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Excluded Files and Folders')
+			.setDesc('Enter a comma-separated list of files or folders to exclude from the index')
+			.addText((text) =>
+				text
+					.setPlaceholder('path/to/file.md, path/to/folder')
+					.setValue(this.plugin.settings.excludedFilesAndFolders.join(', '))
+					.onChange(async (value) => {
+						this.plugin.settings.excludedFilesAndFolders = value.split(',').map((s) => s.trim());
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Number of Results')
+			.setDesc('How many similar notes to display')
+			.addSlider((slider) =>
+				slider
+					.setLimits(1, 100, 1)
+					.setValue(this.plugin.settings.numberOfResults)
+					.onChange(async (value) => {
+						this.plugin.settings.numberOfResults = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Embedding Model')
+			.setDesc('Choose the OpenAI embedding model to use')
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption('text-embedding-ada-002', 'text-embedding-ada-002')
+					.addOption('text-embedding-babbage-001', 'text-embedding-babbage-001')
+					// ... Add more models as needed
+					.setValue(this.plugin.settings.embeddingModel)
+					.onChange(async (value) => {
+						this.plugin.settings.embeddingModel = value;
+						await this.plugin.saveSettings();
+					})
+			);
 	}
 }
