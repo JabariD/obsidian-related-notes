@@ -1,86 +1,12 @@
 import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView, TFile, TAbstractFile } from 'obsidian';
 import * as path from 'path';
+import { NoteEmbedder } from 'embeddings/note_embedder';
 
 
 // Interface for embedding data
 interface EmbeddingData {
 	[filePath: string]: number[];
-  }
-  
-  // Class to manage embeddings
-  class EmbeddingManager {
-	plugin: SimilarNotesPlugin;
-  
-	constructor(plugin: SimilarNotesPlugin) {
-	  this.plugin = plugin;
-	}
-  
-	// Function to get the embedding directory
-	getEmbeddingDir(): string {
-	  return `${this.plugin.app.vault.configDir}/plugins/obsidian-related-notes/embeddings`;
-	}
-  
-	// Function to generate embeddings (placeholder, will be implemented later)
-	async generateEmbeddings(text: string): Promise<number[]> {
-	  // TODO: Implement actual embedding generation using TF-IDF or other techniques
-	  // For now, return a dummy embedding vector
-	  return Array(1536).fill(0); // Return a dummy embedding vector of length 1536 (for text-embedding-ada-002)
-	}
-  
-	// Function to save embeddings to a file
-	async saveEmbeddings(filePath: string, embeddings: number[]): Promise<void> {
-	  const embeddingDir = this.getEmbeddingDir();
-	  const file = path.join(embeddingDir, btoa(filePath) + '.json'); // Use path.join to handle special characters in file names
-  
-	  if (!await this.plugin.app.vault.adapter.exists(embeddingDir)) {
-		await this.plugin.app.vault.adapter.mkdir(embeddingDir);
-	  }
-  
-	  await this.plugin.app.vault.adapter.write(file, JSON.stringify(embeddings));
-	}
-
-	// Function to load embeddings from a file
-	async loadEmbeddings(filePath: string): Promise<number[] | null> {
-	  const file = `${this.getEmbeddingDir()}/${btoa(filePath)}.json`; // Base64 encode the file path
-  
-	  if (await this.plugin.app.vault.adapter.exists(file)) {
-		const embeddings = await this.plugin.app.vault.adapter.read(file);
-		return JSON.parse(embeddings);
-	  }
-	  return null;
-	}
-  
-	// Function to update embeddings for all notes
-	async updateAllEmbeddings(): Promise<void> {
-	  const { vault } = this.plugin.app;
-	  const { excludedFilesAndFolders } = this.plugin.settings;
-	  const files = vault.getMarkdownFiles();
-  
-	  for (let i = 0; i < files.length; i++) {
-		const file = files[i];
-  
-		// Check if the file or its parent folders are excluded
-		if (this.isFileExcluded(file, excludedFilesAndFolders)) {
-		  continue;
-		}
-  
-		const content = await vault.cachedRead(file);
-		const embeddings = await this.generateEmbeddings(content);
-		await this.saveEmbeddings(file.path, embeddings);
-	  }
-  
-	  new Notice('Embeddings updated for all notes!');
-	}
-  
-	// Helper function to check if a file is excluded based on settings
-	isFileExcluded(file: TFile, excludedFilesAndFolders: string[]): boolean {
-	  return excludedFilesAndFolders.some((excludedPath) => {
-		const fullExcludedPath = excludedPath.startsWith('/') ? excludedPath : `/${excludedPath}`; // Add leading slash if missing
-		return file.path.startsWith(fullExcludedPath);
-	  });
-	}
-  }
-
+}
 
 // Interface for plugin settings
 interface SimilarNotesPluginSettings {
@@ -103,12 +29,12 @@ const DEFAULT_SETTINGS: SimilarNotesPluginSettings = {
 // Plugin class
 export default class SimilarNotesPlugin extends Plugin {
 	settings: SimilarNotesPluginSettings;
-	embeddingManager: EmbeddingManager;
+	embedder:  NoteEmbedder;
 	// ... (Add other variables like embedding cache here later)
 
 	async onload() {
 		await this.loadSettings();
-		this.embeddingManager = new EmbeddingManager(this);
+		this.embedder = new NoteEmbedder(this.settings.openaiApiKey);
 
 		// Register the view
 		this.registerView(
@@ -124,39 +50,111 @@ export default class SimilarNotesPlugin extends Plugin {
 		// Register settings tab
 		this.addSettingTab(new SimilarNotesSettingTab(this.app, this));
 
-		// Add a command to generate and store embeddings for the active note
 		this.addCommand({
-			id: 'generate-and-store-embeddings',
-			name: 'Generate & Store Embeddings (Active Note)',
+			id: 'new-embedding-manager',
+			name: 'Add Embedding For ActiveNote',
 			editorCallback: async (editor: Editor, view: MarkdownView) => {
-			  const activeFile = this.app.workspace.getActiveFile();
-			  if (activeFile) {
-				await this.generateAndStoreEmbeddingsForFile(activeFile);
-				new Notice(`Embeddings generated and stored for ${activeFile.path}`);
-			  } else {
-				new Notice('No active file found.');
-			  }
-			},
-		  });
-
-		// Add a command to load and display embeddings for the active note
-		this.addCommand({
-			id: 'load-and-display-embeddings',
-			name: 'Load & Display Embeddings (Active Note)',
-			editorCallback: async (editor: Editor, view: MarkdownView) => {
-			  const activeFile = this.app.workspace.getActiveFile();
-			  if (activeFile) {
-				const embeddings = await this.embeddingManager.loadEmbeddings(activeFile.path);
-				if (embeddings) {
-				  new Notice(`Embeddings for ${activeFile.path}:\n${JSON.stringify(embeddings)}`);
-				} else {
-				  new Notice(`No embeddings found for ${activeFile.path}`);
+				if (this.settings.openaiApiKey === '') {
+					new Notice('Please enter your OpenAI API key in the plugin settings first.');
+					return;
 				}
-			  } else {
-				new Notice('No active file found.');
-			  }
+
+				const activeFile = this.app.workspace.getActiveFile();
+				if (activeFile) {
+					const content: string = await this.app.vault.read(activeFile);
+					await this.embedder.addNote({ title: activeFile.name, content: content });
+				} else {
+					new Notice('No active file found.');
+				}
 			},
-		  });
+		});
+
+		this.addCommand({
+			id: 'similiar-notes',
+			name: 'Any Similiar Notes',
+			editorCallback: async (editor: Editor, view: MarkdownView) => {
+				const activeFile = this.app.workspace.getActiveFile();
+				if (activeFile) {
+					const content: string = await this.app.vault.read(activeFile);
+
+					const searchResults = await this.embedder.searchNotes(content, /*k=*/50);
+
+					searchResults.forEach(([note, score]) => {
+						console.log(`Title: ${note.title}`);
+						console.log(`Content: ${note.content}`);
+						console.log(`Similarity Score: ${score}`);
+						console.log('---');
+					});
+				} else {
+					new Notice('No active file found.');
+				}
+			},
+		});
+
+		// Add test commands
+        this.addCommand({
+            id: 'test-add-note',
+            name: 'Test: Add Note',
+            callback: async () => {
+                try {
+                    const note = { title: 'Test Note', content: 'This is a test note content.' };
+                    await this.embedder.addNote(note);
+                    console.log('Test: Add Note - Success');
+                    new Notice('Test: Add Note - Success');
+                } catch (error) {
+                    console.error('Test: Add Note - Failed', error);
+                    new Notice('Test: Add Note - Failed. Check console for details.');
+                }
+            }
+        });
+
+        this.addCommand({
+            id: 'test-search-notes',
+            name: 'Test: Search Notes',
+            callback: async () => {
+                try {
+                    const query = 'test';
+                    const results = await this.embedder.searchNotes(query, 5);
+                    console.log('Test: Search Notes - Success', results);
+                    new Notice(`Test: Search Notes - Success. Found ${results.length} results.`);
+                } catch (error) {
+                    console.error('Test: Search Notes - Failed', error);
+                    new Notice('Test: Search Notes - Failed. Check console for details.');
+                }
+            }
+        });
+
+        this.addCommand({
+            id: 'test-save-to-file',
+            name: 'Test: Save to File',
+            callback: async () => {
+                try {
+                    const filePath = path.join(this.app.vault.configDir, 'test-vector-store.json');
+                    await this.embedder.saveToFile(filePath);
+                    console.log('Test: Save to File - Success', filePath);
+                    new Notice(`Test: Save to File - Success. Saved to ${filePath}`);
+                } catch (error) {
+                    console.error('Test: Save to File - Failed', error);
+                    new Notice('Test: Save to File - Failed. Check console for details.');
+                }
+            }
+        });
+
+        this.addCommand({
+            id: 'test-load-from-file',
+            name: 'Test: Load from File',
+            callback: async () => {
+                try {
+                    const filePath = path.join(this.app.vault.configDir, 'test-vector-store.json');
+                    await this.embedder.loadFromFile(filePath);
+                    console.log('Test: Load from File - Success');
+                    new Notice('Test: Load from File - Success');
+                } catch (error) {
+                    console.error('Test: Load from File - Failed', error);
+                    new Notice('Test: Load from File - Failed. Check console for details.');
+                }
+            }
+        });
 	}
 
 	onunload() {
@@ -197,15 +195,6 @@ export default class SimilarNotesPlugin extends Plugin {
 			workspace.revealLeaf(leaf);
 		}
 	}
-
-	// Helper function to generate and store embeddings for a given file
-	async generateAndStoreEmbeddingsForFile(file: TAbstractFile): Promise<void> {
-		if (file instanceof TFile) {
-		  const content = await this.app.vault.cachedRead(file);
-		  const embeddings = await this.embeddingManager.generateEmbeddings(content);
-		  await this.embeddingManager.saveEmbeddings(file.path, embeddings);
-		}
-	  }
 }
 
 // Constant for the view type
@@ -213,32 +202,32 @@ export const VIEW_TYPE_SIMILAR_NOTES = 'similar-notes-view';
 
 // View class
 export class SimilarNotesView extends ItemView {
-  plugin: SimilarNotesPlugin;
+	plugin: SimilarNotesPlugin;
 
-  constructor(leaf: WorkspaceLeaf, plugin: SimilarNotesPlugin) {
-    super(leaf);
-    this.plugin = plugin;
-  }
+	constructor(leaf: WorkspaceLeaf, plugin: SimilarNotesPlugin) {
+		super(leaf);
+		this.plugin = plugin;
+	}
 
-  getViewType() {
-    return VIEW_TYPE_SIMILAR_NOTES;
-  }
+	getViewType() {
+		return VIEW_TYPE_SIMILAR_NOTES;
+	}
 
-  getDisplayText() {
-    return 'Similar Notes';
-  }
+	getDisplayText() {
+		return 'Similar Notes';
+	}
 
-  async onOpen() {
-    const container = this.containerEl.children[1];
-    container.empty();
-    container.createEl('h2', { text: 'Similar Notes' });
+	async onOpen() {
+		const container = this.containerEl.children[1];
+		container.empty();
+		container.createEl('h2', { text: 'Similar Notes' });
 
-    // ... (Add code to fetch and display similar notes here later)
-  }
+		// ... (Add code to fetch and display similar notes here later)
+	}
 
-  async onClose() {
-    // ... (Cleanup any elements or data here)
-  }
+	async onClose() {
+		// ... (Cleanup any elements or data here)
+	}
 }
 
 // Settings tab for configuring the plugin

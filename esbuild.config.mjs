@@ -20,6 +20,7 @@ const context = await esbuild.context({
 	external: [
 		"obsidian",
 		"electron",
+		"hnswlib-node",
 		"@codemirror/autocomplete",
 		"@codemirror/collab",
 		"@codemirror/commands",
@@ -38,6 +39,7 @@ const context = await esbuild.context({
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
 	outfile: "main.js",
+	platform: 'node',
 });
 
 if (prod) {
